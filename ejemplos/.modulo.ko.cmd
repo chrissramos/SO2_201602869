@@ -1,0 +1,1 @@
+cmd_/home/chriss/Documentos/Sopes2Lab/SO2_201602869/ejemplos/modulo.ko := ld -r -m elf_x86_64 -z noexecstack --build-id=sha1  -T scripts/module.lds -o /home/chriss/Documentos/Sopes2Lab/SO2_201602869/ejemplos/modulo.ko /home/chriss/Documentos/Sopes2Lab/SO2_201602869/ejemplos/modulo.o /home/chriss/Documentos/Sopes2Lab/SO2_201602869/ejemplos/modulo.mod.o;  true

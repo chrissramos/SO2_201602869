@@ -1,0 +1,1 @@
+cmd_/home/chriss/Documentos/Sopes2Lab/SO2_201602869/ejemplos/modules.order := {   echo /home/chriss/Documentos/Sopes2Lab/SO2_201602869/ejemplos/modulo.ko; :; } | awk '!x[$$0]++' - > /home/chriss/Documentos/Sopes2Lab/SO2_201602869/ejemplos/modules.order
