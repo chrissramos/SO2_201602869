@@ -36,21 +36,18 @@ pthread_mutex_t mutex_users = PTHREAD_MUTEX_INITIALIZER; // Mutex para controlar
 pthread_mutex_t mutex_operations = PTHREAD_MUTEX_INITIALIZER; // Mutex para controlar el acceso al arreglo de operaciones
 
 // Estructura para almacenar el resumen de carga de usuarios por hilo
-
 struct thread_summary {
     int thread_id;
     int count;
 };
+
 struct thread_summary thread_summaries[NUM_THREADS];
 
-
-/// este es para operaciones
 struct thread_operation_summary {
     int thread_id;
-    int withdrawals;
-    int deposits;
-    int transfers;
+    int count;
 };
+
 
 struct thread_operation_summary operation_thread_summaries[NUM_OPERATION_THREADS];
 
@@ -68,19 +65,15 @@ int total_errors = 0; // Contador de registros de errores
 
 // Estructura para almacenar el resumen de operaciones
 struct operation_summary {
-    int thread_id;
     int withdrawals;
     int deposits;
     int transfers;
 };
 
-
 // Función para cargar operaciones masivas desde un archivo CSV en un hilo
-void *load_operations(void *arg) {
-    int thread_id = *((int *)arg); // Identificador del hilo
-    char filename_operations[] = "transacciones.csv"; // Nombre del archivo CSV con las operaciones
-
-    FILE *fp = fopen(filename_operations, "r");
+void *load_operations(void *filename) {
+    char *csv_file = (char *)filename;
+    FILE *fp = fopen(csv_file, "r");
     if (fp == NULL) {
         perror("Error al abrir el archivo");
         pthread_exit(NULL);
@@ -88,25 +81,12 @@ void *load_operations(void *arg) {
 
     char row[CSV_ROW_LENGTH];
     char *token;
+    int line_number = 2; // Para mantener el número de línea
 
     // Se omite la primera fila (encabezados)
     fgets(row, CSV_ROW_LENGTH, fp);
 
-    int count = 0; // Contador para rastrear el número de operaciones cargadas por este hilo
-
-    // Inicializar el resumen de operaciones para este hilo
-    operation_thread_summaries[thread_id].thread_id = thread_id;
-    operation_thread_summaries[thread_id].withdrawals = 0;
-    operation_thread_summaries[thread_id].deposits = 0;
-    operation_thread_summaries[thread_id].transfers = 0;
-
     while (fgets(row, CSV_ROW_LENGTH, fp) != NULL) {
-        // Verificar si este hilo debe procesar esta línea
-        if (count % NUM_OPERATION_THREADS != thread_id) {
-            count++;
-            continue;
-        }
-
         token = strtok(row, ",");
         int operation_type = atoi(token);
 
@@ -119,91 +99,38 @@ void *load_operations(void *arg) {
         token = strtok(NULL, ",");
         double amount = atof(token);
 
-        // Actualizar el recuento de operaciones para el hilo actual
-        switch (operation_type) {
-            case 1:
-                operation_thread_summaries[thread_id].withdrawals++;
-                break;
-            case 2:
-                operation_thread_summaries[thread_id].deposits++;
-                break;
-            case 3:
-                operation_thread_summaries[thread_id].transfers++;
-                break;
-            default:
-                // Tipo de operación no reconocido
-                break;
+        // Validar monto negativo
+        if (amount < 0) {
+            sprintf(error_records[total_errors].error_message, "Monto negativo");
+            error_records[total_errors].line_number = line_number;
+            strncpy(error_records[total_errors].row, row, CSV_ROW_LENGTH);
+            total_errors++;
+        } else {
+            // Bloquear el acceso al arreglo de operaciones antes de agregar una nueva
+            pthread_mutex_lock(&mutex_operations);
+
+            if (total_operations < MAX_OPERATIONS) {
+                operations[total_operations].operation_type = operation_type;
+                operations[total_operations].account1 = account1;
+                operations[total_operations].account2 = account2;
+                operations[total_operations].amount = amount;
+                total_operations++;
+            } else {
+                printf("Error: No se pudo cargar la operación %d, límite de operaciones alcanzado.\n", operation_type);
+            }
+
+            // Desbloquear el acceso al arreglo de operaciones
+            pthread_mutex_unlock(&mutex_operations);
         }
 
-        count++;
+        line_number++;
     }
 
     fclose(fp);
     pthread_exit(NULL);
 }
 
-
-// Función para generar el reporte de operaciones
-void generate_operation_report(struct thread_operation_summary summaries[]) {
-    // Obtener la fecha y hora actual
-    time_t current_time = time(NULL);
-    struct tm *local_time = localtime(&current_time);
-    char datetime[20];
-    strftime(datetime, 20, "%Y_%m_%d-%H_%M_%S", local_time);
-
-    // Crear el nombre del archivo con el formato especificado
-    char filename[50];
-    sprintf(filename, "operaciones_%s.log", datetime);
-
-    // Abrir el archivo en modo escritura
-    FILE *fp = fopen(filename, "w");
-    if (fp == NULL) {
-        perror("Error al abrir el archivo de reporte de operaciones");
-        return;
-    }
-
-    // Escribir el encabezado del reporte
-    fprintf(fp, "------ Resumen de Operaciones ------\n");
-    fprintf(fp, "Fecha: %s\n\n", datetime);
-
-    // Escribir el resumen de operaciones por hilo
-    fprintf(fp, "Operaciones realizadas por hilo:\n");
-    for (int i = 0; i < NUM_OPERATION_THREADS; i++) {
-        fprintf(fp, "Hilo #%d: %d\n", summaries[i].thread_id + 1, summaries[i].withdrawals + summaries[i].deposits + summaries[i].transfers);
-    }
-
-    // Calcular el total de operaciones
-    int total_operations = 0;
-    for (int i = 0; i < NUM_OPERATION_THREADS; i++) {
-        total_operations += summaries[i].withdrawals + summaries[i].deposits + summaries[i].transfers;
-    }
-
-    // Escribir el total de operaciones
-    fprintf(fp, "Total: %d\n", total_operations);
-
-    // Cerrar el archivo
-    fclose(fp);
-
-    printf("Reporte de operaciones generado: %s\n", filename);
-}
-
-// Función para mostrar el menú y obtener la opción del usuario
-int show_menu() {
-    int option;
-    printf("\nMenu:\n");
-    printf("1. Operaciones Individuales.\n");
-    printf("2. Carga Masiva de Operaciones.\n");
-    printf("3. Estado De Cuentas.\n");
-    printf("4. Reporte de Carga de Usuarios.\n");
-    printf("5. Reporte de Errores.\n");
-    printf("6. Salir.\n");
-    printf("Ingrese el número de opción deseada: ");
-    scanf("%d", &option);
-    return option;
-}
-
-
-void generate_user_load_report() { // este es el reporte 1 automatico
+void generate_user_load_report() {
     // Obtener la fecha y hora actual
     time_t current_time = time(NULL);
     struct tm *local_time = localtime(&current_time);
@@ -244,6 +171,65 @@ void generate_user_load_report() { // este es el reporte 1 automatico
     fclose(fp);
 
     printf("Reporte de carga de usuarios generado: %s\n", filename);
+}
+
+
+
+// Función para generar el reporte de operaciones
+void generate_operation_report(struct operation_summary summary) {
+    // Obtener la fecha y hora actual
+    time_t current_time = time(NULL);
+    struct tm *local_time = localtime(&current_time);
+    char datetime[20];
+    strftime(datetime, 20, "%Y_%m_%d-%H_%M_%S", local_time);
+
+    // Crear el nombre del archivo con el formato especificado
+    char filename[50];
+    sprintf(filename, "operaciones_%s.log", datetime);
+
+    // Abrir el archivo en modo escritura
+    FILE *fp = fopen(filename, "w");
+    if (fp == NULL) {
+        perror("Error al abrir el archivo de reporte de operaciones");
+        return;
+    }
+
+    // Escribir el encabezado del reporte
+    fprintf(fp, "------ Resumen de Operaciones------\n");
+    fprintf(fp, "Fecha: %s\n\n", datetime);
+
+    // Escribir el resumen de operaciones
+    fprintf(fp, "Operaciones realizadas:\n");
+    fprintf(fp, "Retiros: %d\n", summary.withdrawals);
+    fprintf(fp, "Depositos: %d\n", summary.deposits);
+    fprintf(fp, "Transferencias: %d\n", summary.transfers);
+    fprintf(fp, "Total: %d\n\n", summary.withdrawals + summary.deposits + summary.transfers);
+
+    // Escribir los registros con errores
+    fprintf(fp, "Errores:\n");
+    for (int i = 0; i < total_errors; i++) {
+        fprintf(fp, "Linea %d: %s - %s\n", error_records[i].line_number, error_records[i].row, error_records[i].error_message);
+    }
+
+    // Cerrar el archivo
+    fclose(fp);
+
+    printf("Reporte de operaciones generado: %s\n", filename);
+}
+
+// Función para mostrar el menú y obtener la opción del usuario
+int show_menu() {
+    int option;
+    printf("\nMenu:\n");
+    printf("1. Operaciones Individuales.\n");
+    printf("2. Carga Masiva de Operaciones.\n");
+    printf("3. Estado De Cuentas.\n");
+    printf("4. Reporte de Carga de Usuarios.\n");
+    printf("5. Reporte de Errores.\n");
+    printf("6. Salir.\n");
+    printf("Ingrese el número de opción deseada: ");
+    scanf("%d", &option);
+    return option;
 }
 
 // Función para imprimir los estados de cuenta en consola
@@ -368,34 +354,40 @@ int main() {
             case 2:
                 // Carga Masiva de Operaciones
                 // Cargar operaciones masivas desde el archivo transacciones.csv
-                pthread_t threads_operations[NUM_OPERATION_THREADS]; // Array de hilos para la carga de operaciones
-                int operation_thread_ids[NUM_OPERATION_THREADS]; // Array de identificadores de hilo
-
-                // Inicializar los identificadores de hilo para operaciones
-                for (int i = 0; i < NUM_OPERATION_THREADS; i++) {
-                    operation_thread_ids[i] = i;
+                pthread_t threads_operations;
+                if (pthread_create(&threads_operations, NULL, load_operations, (void *)"transacciones.csv") != 0) {
+                    perror("Error al crear el hilo de carga de operaciones");
+                    exit(EXIT_FAILURE);
                 }
 
-                // Crear hilos para la carga de operaciones
-                for (int i = 0; i < NUM_OPERATION_THREADS; i++) {
-                    if (pthread_create(&threads_operations[i], NULL, load_operations, (void *)&operation_thread_ids[i]) != 0) {
-                        perror("Error al crear el hilo de carga de operaciones");
-                        exit(EXIT_FAILURE);
-                    }
-                }
-
-                // Esperar a que los hilos de carga de operaciones terminen
-                for (int i = 0; i < NUM_OPERATION_THREADS; i++) {
-                    if (pthread_join(threads_operations[i], NULL) != 0) {
-                        perror("Error al unir el hilo de carga de operaciones");
-                        exit(EXIT_FAILURE);
-                    }
+                // Esperar a que el hilo de carga de operaciones termine
+                if (pthread_join(threads_operations, NULL) != 0) {
+                    perror("Error al unir el hilo de carga de operaciones");
+                    exit(EXIT_FAILURE);
                 }
 
                 printf("Carga de operaciones completada.\n");
 
                 // Generar el reporte de operaciones
-                generate_operation_report(operation_thread_summaries);
+                struct operation_summary summary;
+                summary.withdrawals = 0;
+                summary.deposits = 0;
+                summary.transfers = 0;
+                // Contar el número de cada tipo de operación
+                for (int i = 0; i < total_operations; i++) {
+                    switch (operations[i].operation_type) {
+                        case 1:
+                            summary.withdrawals++;
+                            break;
+                        case 2:
+                            summary.deposits++;
+                            break;
+                        case 3:
+                            summary.transfers++;
+                            break;
+                    }
+                }
+                generate_operation_report(summary);
 
                 break;
             case 3:

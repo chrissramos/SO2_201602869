@@ -1,0 +1,11 @@
+-----Carga De Usuarios:----
+Fecha: 2024_03_18-19_20_33
+
+Usuarios Cargados por hilo:
+Hilo 0: 33
+Hilo 1: 33
+Hilo 2: 33
+Total: 99
+
+Errores:
+Línea 71: 8206 - Saldo no válido o negativo
